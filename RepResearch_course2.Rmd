@@ -1,0 +1,900 @@
+---
+title: "Public Health and Economic Impacts due to Climate Events in USA"
+subtitle: "Analysis from NOAA Storm Database"
+author: "Joaquín Soliño Pérez"
+date: "Feb, 5th 2021"
+output: 
+  html_document: 
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+The main objecive of this document is to explain the health and economical impact due to Clima Events in USA. To do it, we'll use the [NOAA Storm Data Base](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2).
+
+Climate Events have got a very remarcable property: ___a great dispersion of impact magnitudes___. This means that we usually find much events with a small or no impact impact and a small portion of total events with high and/or extremelly high impacts.
+
+The first part of the document is dedicated to explore and prepare the data for the analysis of impacts. The second one, is dadicated to explain the results of the analysis in three dimensions:
+
++ Total impact per Even Type
++ Most harmfull and damage Event Types
++ Evolution in time
+
+for more details you can visit [NOAA / NWS Directives System] (https://www.nws.noaa.gov/directives/)
+
+## Data Processing
+
+This chapeter includes all the exploratory and preparation of data for the analysis.
+
+
+### Load libraries
+
+In first place, we have to load the libraries for the analysis (find a brief explanation at the side of each package:
+
+```{r LIBRARIES, results=FALSE, warning=FALSE}
+library(lubridate)      # manage dates
+library(dplyr)          # for data transformation
+library(tidyr)          # for data transformation
+library(stringr)        # for strings manipulation
+library(ggplot2)        # for plottings
+library(ggrepel)        # for plottings
+library(patchwork)      # for plot layout
+
+```
+
+
+### Download data from URL
+
+According to the project information, the data is available at [this link](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2).
+
+The steps to download the data:
+
+1. Get the URL from the assigment, decode the URL
+2. Decode the URL
+3. Extract the name of the file from URL
+4. Create (in not exist) the folder `data/`
+5. Download (in not available) the file to the folder `data/`
+
+Find the code bellow:
+
+```{r DOWNLOAD_DATA}
+
+# Gete de URL
+my_url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+URLdecode(my_url)
+
+# The file name is the part of the URL after the last '/'.
+split_URL <- strsplit(URLdecode(my_url),c("/"))       # slpit the URL string
+my_file <- split_URL[[1]][length(split_URL[[1]])]     # extract the file name
+my_file                                               # show file name
+dest_file <- paste0("data/",my_file)                  # destination file (complete path)
+
+# if 'data/' folder doesn't exist, create it
+if (!dir.exists("data/")){
+      dir.create("data")
+      }
+
+# if the file is not available in data/ folder, download it from URL
+if(!file.exists(dest_file)){
+   download.file(my_url,dest_file)
+}
+
+```
+
+The size of the file is `r formatC(file.info(dest_file)$size/2^20)` MBytes, and is bz2 extension, so we must expect it has got much data.
+
+### Read and understand the data
+
+Next to downloaded the file, we continue reading the file `r dest_file` and storing it in a dataframe variable named `data`.
+
+```{r READ_DATA}
+
+data <- read.csv(dest_file)               # 'read.csv' can read .bz2!!
+```
+
+Now is time to explore `data`:
+
+```{r PREP_DATA_0}
+str(data)                                 # Review the structure of data
+
+```
+
+You can see there are `r length(data$EVTYPE)` observations and `r length(data)` variables.
+
+The analitys is focused on harmful to population health and economic impacts, so we'll select a subset with the relevant variables for this purpose. These variables are:
+
++ `BGN_DATE` (char): the beginning date of an event.
++ `EVTYPE` (char): the event type.
++ `FATALITIES` (num): the amount of fatalities due the event (# of people)
++ `INJURIES` (num):  the amount of injuries due the event (# of people)
++ `PROPDMG` (num): the amount of property damage (without exponent) due the event
++ `PROPDMGEXP` (char): character with the exponent of `PROPDMG` to obtain the property damage due the event, in USD
++ `CROPDMG` (num): the amount of crops damage (without exponent) due the event, `CROPDMGEXP`) (char): character with the exponent of `CROPDMG` to obtain the crop damage due the event, in USD
+
+```{r PREP_DATA_1}
+
+data <- data %>% select(
+      BGN_DATE,
+      EVTYPE,
+      FATALITIES,
+      INJURIES,
+      PROPDMG,
+      PROPDMGEXP,
+      CROPDMG,
+      CROPDMGEXP
+)
+``` 
+
+`BGN_DATE` is a date in string format.I'll convert it to Date, using `mdy_hms` function from `lubridate` package. This variable will allow to analyze trends of health and economical impacts through the years. 
+
+```{r PREP_DATA_1_1}
+data$BGN_DATE <- mdy_hms(data$BGN_DATE)        # Convert BGN string to Date
+
+data$BGN_YEAR <- year(data$BGN_DATE)
+
+range(data$BGN_DATE)
+
+```
+
+We have events registered from around `r max(data$BGN_YEAR) - min(data$BGN_YEAR) +1` years.
+
+Lets count registered data by decade:
+
+```{r PREP_DATA_1_2}
+
+prettyNum(table((data$BGN_YEAR%/%10*10)), big.mark = ",")
+
+```
+
+You can see than the number of registered events have being almost doubling decade by decade (please note than 2010 decade has only data from 2 years, so we should forecast 5 times to compare with 2000-2009).
+
+#### Health Impact
+
+Health impact is measured in two variables: `FATALITIES` and `INJURIES`, both of them has the numer of affected people in the event.
+
+Let see a summary of these two variables:
+
+```{r DATA_PREP_2_0}
+
+summary(data$FATALITIES)
+
+summary(data$INJURIES)
+
+```
+
+Please look at 1st , 2nd (Median) and 3rd quantiles; they have value 0! 
+This is exactly what I have explaned at the beginning o this project. We are working with a very high dispersion data.
+
+In line with the above, almost all the scales to measure nature impacts and perception magnitudes (Ritcher scale for earthquakes, Tornado force,... but also sound volume), are measured in a logaritmic scale. 
+
+In conclusion, my purpose is to measure the health impacts based in a logatimic squeme of intervals, like this:
+
+```{r DATA_PREP_2_1}
+
+## Breaks and labels in a log-scale squeme for Health impact
+health_cut_breaks <- c(0, 1, 3, 10, 30, 100, 300, 1e+3, 3e+3,1e+4,3e+4,1e+5,3e+5)
+health_cut_labels <- c("[0,1)", "[1,3)", "[3,10)", "[10,30)", "[30,100)", 
+                       "[100,300)", "[300,1K)", "[1K,3K)","[3K,10K)","[10K,30K)",
+                       "[30K,100K)","[100K,300K)")
+```
+
+Please remind that close bracket `[` means that this limit of the iterval is include, instead open bracket `(` means that this limit of the interfal is excluded. For example, `[0,1)` means that this interval has less than 1 (i.e. 0 for integer variables). `[10,30)` means that the interval considers from 10 to 29. I have used "K" to abbreviate 1000.
+
+Let's take a look ath distribution (frequency) of events per `FATALITIES` intervals: 
+```{r DATA_PREP_2_2}
+
+## Conteo total de casos fatales por rangos y décadas
+with(data, table(
+      cut(FATALITIES, breaks = health_cut_breaks, labels = health_cut_labels,
+            righ = F, ordered_result = T)
+      ))
+
+```
+
+You can see the exponencial decrease pattern, with a log-scale intervals.
+
+
+We do the same for `INJURIES`...
+
+```{r DATA_PREP_2_3}
+
+## Conteo total de casos fatales por rangos y décadas
+      with(data, table(
+      cut(INJURIES, breaks = health_cut_breaks, labels = health_cut_labels,
+            righ = F, ordered_result = T)
+      ))
+```
+
+The same pattern.
+
+I'm interested to understad the contribution of impacts per interval over the overall total impact. To do it, I'll create two new variables: `fatal_intervals` and `injur_intervals`; both are Factors to classify each event in terms of fatalities and injuries. I also create the variable `total_health` to sum fatalities and injuries of the event. 
+
+```{r DATA_PREP_2_4}
+
+data <- data %>% mutate(
+      decade = factor(paste0(year(BGN_DATE) %/% 10 * 10, "s"), ordered = T),
+      total_health = FATALITIES + INJURIES,        # Total health impact of the event
+      fatal_intervals = cut(
+            FATALITIES,
+            breaks = health_cut_breaks,
+            labels = health_cut_labels,
+            righ = F,
+            ordered_result = T
+            ),
+      injur_intervals = cut(
+            INJURIES,
+            breaks = health_cut_breaks,
+            labels = health_cut_labels,
+            righ = F,
+            ordered_result = T
+            ),
+      health_intervals = cut(
+            total_health,
+            breaks = health_cut_breaks,
+            labels = health_cut_labels,
+            righ = F,
+            ordered_result = T
+            )
+      )
+      
+```
+
+Summarising injury impacts per interval:
+
+```{r PREP_DATA_2_5}
+
+total_events <- length(data$BGN_DATE)
+total_injur <- sum(data$INJURIES, na.rm = T)
+
+data %>%  group_by(injur_intervals) %>% 
+      summarise(freq_injur = n(),
+                "freq_injur(%)"= freq_injur/total_events*100,
+                sum_injur = sum(INJURIES, na.rm = T),
+                "sum_injur(%)" = sum_injur/total_injur*100
+                )
+
+```
+
+> You can see something very important: 98.0% of events has no impact, and 90% of impacts are concentred in 0,79% of events.
+
+In a equivalent way, fatal impacts per interval:
+```{r PREP_DATA_2_6}
+total_fatal <- sum(data$FATALITIES, na.rm = T)
+
+data %>%  group_by(fatal_intervals) %>% 
+      summarise(freq_fatal = n(),
+                "freq_fatal(%)" = freq_fatal/total_events*100,
+                sum_fatal = sum(FATALITIES, na.rm = T),
+                "sum_fatal(%)" = sum_fatal/total_fatal*100
+                )
+```
+
+> Again, you can see the same effect: 99.23% of events has no impact and more than the 50% of the impact is concentrated in only 968 events (0,133% of the total events).   
+
+
+### Exponents for Property and Crop Damages
+
+Exponents are used to complete the damage data. In this way, you have the variable `PROPDMG`with a number, but it has to complete with `PROPDMGEXP`. Some examples:
+
+
+| PROPDMG | PROPDMGEXP | Damage |
+| :----:  |  :------:  |  :-----------:  |
+| 500  |   | 500 |
+| 25  |  K | 25,000 |
+| 2.5 |  K | 2,500 |
+| 25  |  6 | 25*10^6^ = 25,000,000 |
+
+The values for `PROPDMGEXP` are:
+
+```{r PREP_DATA_3_0}
+table(data$PROPDMGEXP)
+```
+
+For `CROPDMGEXP`:
+```{r PREP_DATA_3_1}
+table(data$CROPDMGEXP)
+```
+
+
+| Exponent | Equivalence |
+| :------: | :---------: |
+| '' '-' '+' '?' | 1 |
+| 0 to 9 | 10^x^ |
+| h, H | 100 (10^2^) |
+| k, K | 1,000 (10^3^) |
+| m, M | 1,000,000 (10^6^) |
+| b, B | 1,000,000,000 (10^9^) |
+
+Next, I'll create 5 new variables:  
+
++ `prop_exp` and `crop_exp` to store the numerical equivalence of the exponent (as explained avobe). 
++ `property_damage` and `crop_damage` stores the damage in USD. 
++ `total_damage` that sums total property and crop damages in USD.
+
+```{r PREP_DATA_3_2, warning=FALSE}
+
+data <- data %>% mutate(
+            prop_exp = case_when(
+                  PROPDMGEXP %in% c("H", "h") ~ 1e+2,
+                  PROPDMGEXP %in% c("K", "k") ~ 1e+3,
+                  PROPDMGEXP %in% c("M", "m") ~ 1e+6,
+                  PROPDMGEXP %in% c("B", "b") ~ 1e+9,
+                  PROPDMGEXP %in% c("", "-", "+", "?") ~ 1,
+                  str_detect(PROPDMGEXP, "\\d") ~ 10 ^ as.numeric(PROPDMGEXP)
+            ),
+            crop_exp = case_when(
+                  CROPDMGEXP %in% c("H", "h") ~ 1e+2,
+                  CROPDMGEXP %in% c("K", "k") ~ 1e+3,
+                  CROPDMGEXP %in% c("M", "m") ~ 1e+6,
+                  CROPDMGEXP %in% c("B", "b") ~ 1e+9,
+                  CROPDMGEXP %in% c("", "-", "+", "?") ~ 1,
+                  str_detect(CROPDMGEXP, "\\d") ~ 10 ^ as.numeric(CROPDMGEXP)
+            ),
+            
+            property_damage = PROPDMG * prop_exp,
+            crop_damage = CROPDMG * crop_exp,
+            total_damage = property_damage + crop_damage
+)
+
+```
+
+Now we have calculated the damage, I'm going to explore the data. First, `property_damage`:
+
+```{r PREP_DATA_3_3}
+
+summary(data$property_damage)
+
+```
+
+As I have explain previosuly, this variable has a very high dispersión.
+Next, we do the same with `crop_damange`
+
+```{r PREP_DATA_3_4}
+
+summary(data$crop_damage)
+
+```
+
+And you can see the results are similar.
+
+In the same way that I have made for heath, I'm going to measure the distribution and sum of the impact in base a like-logaritmic scale intervals
+
+```{r PREP_DATA_3_5}
+
+## Breaks and labels in a log-scale squeme for Damage
+damage_cut_breaks <- c(0, 1, 1e+3, 30e+3, 1e+6, 30e+6, 1e+9, 30e+9, 1e+12)
+damage_cut_labels <- c("[0,1)", "[1,1K)","[1K,30K)", "[30K,1M)", "[1M,30M)",
+                       "[30M,1B)","[1B,30B)", "[30B,1000B)")
+
+data <- data %>% mutate(
+      prop_dmg_intervals = cut(
+            property_damage,
+            breaks = damage_cut_breaks,
+            labels = damage_cut_labels,
+            righ = F,
+            ordered_result = T
+            ),
+      crop_dmg_intervals = cut(
+            crop_damage,
+            breaks = damage_cut_breaks,
+            labels = damage_cut_labels,
+            righ = F,
+            ordered_result = T
+            ),
+      total_dmg_intervals = cut(
+            total_damage,
+            breaks = damage_cut_breaks,
+            labels = damage_cut_labels,
+            righ = F,
+            ordered_result = T
+            )
+
+      )
+
+```
+
+
+```{r PREP_DATA_3_6}
+
+total_events <- length(data$BGN_DATE)
+total_prop_dmg <- sum(data$property_damage, na.rm = T)
+
+data %>%  group_by(prop_dmg_intervals) %>% 
+      summarise(freq_prop_dmg = n(),
+                "freq_prop_dmg(%)"= freq_prop_dmg/total_events*100,
+                sum_prop_dmg = sum(property_damage, na.rm = T),
+                "%_prop_dmg" = sum_prop_dmg/total_prop_dmg*100
+                )
+
+```
+
+> You can see that 64% of total property damage is concentrated in 39 events, which represents the 0,0043% of all the events
+
+```{r PREP_DATA_3_7}
+
+total_crop_dmg <- sum(data$crop_damage, na.rm = T)
+
+data %>%  group_by(crop_dmg_intervals) %>% 
+      summarise(freq_crop_dmg = n(),
+                "freq_crop_dmg(%)"= freq_crop_dmg/total_events*100,
+                sum_crop_dmg = sum(crop_damage, na.rm = T),
+                "%_crop_dmg" = sum_crop_dmg/total_crop_dmg*100
+                )
+
+```
+
+> In the same way, 80,1% of total crop damage is concentrated in 226 events, which represents the 0,0043% of all the events
+
+
+#### Event Types
+
+In the Service Instruction 10-1605 (august 17, 2007) related to STORM DATA PREPARATION, the NWS establishes the Permitted Storm Data Events (section 2.1).
+
+You can find this document at the NOAA Webpage in  [this link](https://www.nws.noaa.gov/directives/sym/pd01016005curr.pdf):
+
+According to this directive, there are 48 Types of Events. I have copied them in a comma separated values file, to test the number of matchs and to solve errors.
+
+```{r PREP_DATA_4_0}
+
+event_type_table <- read.csv("data/EventTable.scv")
+event_type_table$Event.Name
+
+```
+
+If we count the unique Event Types from the data:
+
+```{r PREP_DATA_4_1} 
+length(unique(data$EVTYPE))
+
+```
+
+We are going to review the number of events than don't match the NWS Event Type table
+
+```{r PREP_DATA_4_2}
+no_match <- data$EVTYPE[!(data$EVTYPE %in% toupper(event_type_table$Event.Name))]
+length(no_match)
+
+```
+
+> `r formatC(length(no_match),big.mark =",")` events dont match the NWS Event Type Table. This represents `r formatC(length(no_match) / length(data$EVTYPE)*100, digits = 4,format = "f")`% of total observations.
+
+To fix this, we start with the TOP 40 (discrecional) Event Types, and check de root cause of the missmatch:
+
+```{r PREP_DATA_4_3}
+sorted_events <- sort(table(data$EVTYPE),decreasing = T)
+head(sorted_events,40)        # List TOP 40 Event Types
+top_freq_event <- names(head(sorted_events,40)) # Store the Names
+# The name of the Events that missmatch Table and belong to TOP 25 Events occur
+top_freq_event[!(top_freq_event %in% toupper(event_type_table$Event.Name))]
+
+```
+
+We can see that missmatches have different causes: use of abbreviations (`{TSTM}` _vs_ `{THUNDERSTORM}`, `FLD` _vs_ `FLOOD`), plural forms (`WINDS` _vs_ `WIND`), mix 2 types (`TSTM WIND/HAIL`, FLOOD/FLASH FLOOD) and other that not correspond to a valid Event Type and must be fixed:
+
++ URBAN/SML STREAM FLD will be assigned to FLOOD. Please check [Glosary - NOAA](https://w1.weather.gov/glossary/index.php?word=Urban+and+Small+Stream+Flood+Advisory)) for more information about this event.
++ WILD/FOREST FIRE must be assigned to WILDFIRE. No other option is available for FIRE.
++ WINTER WEATHER/MIX will be assigned to WINTER WEATHER. MIX doesn't exist.
++ Other mixed valid options, like TSTM WIND/HAIL or FLOOD/FLASH FLOOD will keep as their are, because we don't have criteria to select wich type predominates over the other one.
+
+Next, you'll find the corrections made over a new variable `EVTYPE2` (for non-destructive comparisson):
+
+```{r PREP_DATA_4_4}
+
+data$EVTYPE2 <- data$EVTYPE         # copy EVTYPE to EVTYPE2
+
+# Fix Typing errors
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"AVALANCE","AVALANCHE")  # typing error
+# Fix Plural
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"WINDS","WIND")
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"CURRENTS","CURRENT")    
+# Replace Abbreviations
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"FLD","FLOOD")           
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"TSTM","THUNDERSTORM")
+# Fix Gerund instead noun
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"FLOODING","FLOOD")
+# Fix some events - no other valid choice
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"URBAN/SML STREAM FLOOD","FLOOD")
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"WILD/FOREST FIRE","WILDFIRE")
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"WINTER WEATHER/MIX","WINTER WEATHER")
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"EXTREME COLD","EXTREME COLD/WIND CHILL")
+data$EVTYPE2 <- str_replace(data$EVTYPE2,"EXTREME WINDCHILL","EXTREME COLD/WIND CHILL")
+
+# Fix some event related to high health and/or economic impact
+data$EVTYPE2[str_detect(data$EVTYPE2,"BLIZZARD")] <- "BLIZZARD"
+data$EVTYPE2[str_detect(data$EVTYPE2,"HURRICANE")] <- "HURRICANE (TYPHOON)"
+data$EVTYPE2[str_detect(data$EVTYPE2,"TYPHOON")] <- "HURRICANE (TYPHOON)"
+data$EVTYPE2[str_detect(data$EVTYPE2,"FLASH FLOOD")] <- "FLASH FLOOD"
+data$EVTYPE2 <- str_replace(toupper(data$EVTYPE2),"CSTL","COASTAL")
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"COASTAL FLOOD")] <- "COASTAL FLOOD"
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"MAJOR FLOOD")] <- "FLOOD"
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"RIVER F")] <- "FLOOD"
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"STORM SURGE")] <- "STORM SURGE/TIDE"
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"^FOG$")] <- "DENSE FOG"
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"HEAVY SURF")] <- "HIGH SURF"
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"HEAT WAVE")] <- "EXCESSIVE HEAT"
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"HIGH WIND/COLD")] <- "COLD/WIND CHILL"
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"RECORD COLD")] <- "EXTREME COLD/WIND CHILL"
+data$EVTYPE2[str_detect(toupper(data$EVTYPE2),"EXTREME COLD/WIND")] <- "EXTREME COLD/WIND CHILL"
+
+```
+
+After these changes, we repeat the check for missmatch. 
+First, in number of events:
+
+```{r PREP_DATA_4_5}
+length(unique(data$EVTYPE2))
+
+no_match2 <- data$EVTYPE2[!(data$EVTYPE2 %in% toupper(event_type_table$Event.Name))]
+length(no_match2)
+
+```
+
+> We have reduced the number of missmatch events from `r formatC(length(no_match),big.mark=",")` to `r length(no_match2)`. That means `r formatC(length(no_match2) / length(data$EVTYPE)*100, digits = 4,format = "f")`%, which is more reasonable value than previous one.
+
+Now, I test the coverage of Event Types related to health impact:
+
+```{r PREP_DATA_4_6}
+
+sum(data$total_health[data$EVTYPE2 %in% toupper(event_type_table$Event.Name)], na.rm = T)/sum(data$total_health, na.rm = T)
+
+```
+
+> Over 98,5% doing match with valid Type Event is very reasonable data coverage of healt impact for the analysis.
+
+Finally, I test the coverage of Event Types related to damage:
+
+```{r PREP_DATA_4_7}
+
+sum(data$total_damage[data$EVTYPE2 %in% toupper(event_type_table$Event.Name)], na.rm = T)/sum(data$total_damage, na.rm = T)
+
+```
+
+> Over 98% doing match with valid Type Event is a very reasonable data coverage of damages impact for the analysis.
+
+
+## Results and Analysis
+
+Results are explained in two separate sections: health impact and economical impact.
+
+
+### Most harmful events to population health
+
+To present the results, I have made some plots to show:
+
++ Total amount of impacts
++ Zoom in most harmfull events: types and evolution in time
++ Relation betwen fatalities and injuries (most harmfull events)
+ 
+I'll use som plot to support my conclusions.
+
+_Note: that the number of injuries and fatalities are shown in logaritmic scale._
+
+First, the show the total summary of impact per event type, broken down by  fatalities and inuries.
+
+```{r RESULTS_HEALTH_1_1}
+# TOP 10 event types with FATALITIEs impact
+top_sum_event_fatal <- data %>% group_by(EVTYPE2) %>% 
+      summarise(sum = sum(FATALITIES, na.rm = T)) %>% 
+      arrange(desc(sum)) %>% slice_head(n=10)
+
+# TOP 10 event types with INJURIES impact
+top_sum_event_injur <- data %>% group_by(EVTYPE2) %>% 
+      summarise(sum = sum(INJURIES, na.rm = T)) %>% arrange(desc(sum)) %>% 
+      slice_head(n=10)
+
+# Make de union of TOP fatalities and TOP injuries
+top_sum_event_health <- unique(c(top_sum_event_fatal$EVTYPE2, 
+                                 top_sum_event_injur$EVTYPE2))
+
+# Summary of impacts by type of health_impact
+top_health <- data %>% ungroup() %>% 
+      filter(EVTYPE2 %in% top_sum_event_health) %>% 
+      select(EVTYPE2, FATALITIES, INJURIES) %>%
+      pivot_longer(
+             cols = c("FATALITIES", "INJURIES"),
+             names_to = "health_impact",
+             values_to = "impact") %>%
+      group_by(EVTYPE2, health_impact) %>% 
+      summarise(sum = sum(impact, na.rm = T)) %>%
+      ungroup() %>% 
+      arrange(health_impact,sum) %>% filter(sum>0) %>% 
+      mutate(order = row_number())
+            
+      
+
+# Plot Total Impact (Fatalities and Injuries)
+plot_top_health <- top_health %>% ggplot() +
+      geom_col(aes(x = order, y = sum, color = health_impact, 
+                   fill = health_impact), alpha = 0.7, width = 0.7) +
+      geom_label(data= top_health, 
+                aes(order, y= sum, label = formatC(round(sum,0), format = "f", big.mark = ",", digits = 0)), 
+                nudge_y = +0.15, size = 2, label.size = 0.1, alpha = 0.5) +
+      facet_grid(health_impact~.,scales = "free") +
+      # Labels for thitle, axes and caption
+      labs( x = NULL,
+            y = "number of afected people (log10 scale)",
+            title = "Health Impact due to Climate Events in USA (1950-2011)",
+            subtitle = "Top harmfull Event Types",
+            caption = "Source: NOAA Storm Database"
+            ) +
+      # Customize scales, an theme
+      scale_x_continuous(
+            breaks = top_health$order,
+            labels = top_health$EVTYPE2) +
+      scale_y_log10(breaks = health_cut_breaks[-1],
+                    labels = c("1","3","10","30","100","300","1K","3k","10K",
+                               "30K","100K","300K")) +
+      coord_flip() +
+      theme(title = element_text(size = 11),
+            legend.title = element_blank(),
+            axis.text.x = element_text(angle = 0,vjust = .5,size = 8),
+            axis.text.y = element_text(size = 8),
+            legend.position = "none")
+plot_top_health
+
+
+```
+
+You can see that TORNADO is the most harmfull event in terms of total fatalities and injuries, over all the period with data stored.
+
+
+Next, we make a zoom in the most harmfull events in time. Considering the analysis impact done in the previous point I have chosen the next criteria: 
+
+1. Events with fatalities over 30 people (top 15.37%)
+2. Events with injuries over 100 peope (top 18.74%)
+
+
+```{r RESULTS_HEALTH_1_4}
+
+# table(data$fatal_intervals>="[30,100)")
+health_xtreme <- data %>%
+      filter(fatal_intervals >= "[30,100)" |
+                   data$injur_intervals >= "[300,1K)") %>%
+      select(BGN_DATE, EVTYPE2, FATALITIES, INJURIES) %>%
+      pivot_longer(cols = c("FATALITIES", "INJURIES"),
+             names_to = "health_type", values_to = "impact") %>% 
+      filter(impact > 0)      # delete registers with 0 value, due to log-scale
+
+plot_xtreme <- health_xtreme %>% ggplot() +
+      geom_point(aes(x = as.Date(BGN_DATE), y = impact, 
+                color = EVTYPE2, fill = EVTYPE2), alpha = 0.8,size = 3) +
+      geom_text_repel(data = health_xtreme %>% arrange(desc(impact)) %>% slice_head(n=20), 
+                aes(as.Date(BGN_DATE), impact, label = EVTYPE2), 
+                size=2, max.overlaps = 15)+
+      facet_grid(. ~ health_type) +
+      scale_y_log10(breaks = c(1,3,10,30,100,300,1e+3,3e+3, 1e+4,3e+4,1e+5,3e+5),
+                    labels = c("1","3","10","30","100","300","1K","3k","10K",
+                               "30K","100K","300K")) +
+      scale_x_date(date_breaks = "5 years") +
+      labs(x= "Year",
+           y= "Impact (number of people - log10 scale)",
+           title = "Extremelly harmfull Climate Events per year",
+           subtitle = "High imact (over 30 fatalies or over 300 injuries)",
+            caption = "Source: NOAA Storm Database") +
+      theme(title = element_text(size = 12),
+            axis.text.x = element_text(angle = 90,vjust = .5,size = 8),
+            axis.text.y = element_text(size = 8),
+            legend.title = element_blank(),
+            legend.text = element_text(size = 6),
+            legend.position = "bottom")
+```
+
+Finally, I prepared a scatter plot looking for relation between fatalities and injuries.
+
+```{r RESULTS_HEALTH_1_5}
+
+# table(data$fatal_intervals>="[30,100)")
+fatal_vs_injur <- data %>%
+      filter(fatal_intervals >= "[30,100)" |
+                   data$injur_intervals >= "[300,1K)") %>%
+      select(BGN_DATE, EVTYPE2, FATALITIES, INJURIES, fatal_intervals, injur_intervals)
+
+plot_fatal_vs_injur <- fatal_vs_injur %>% ggplot() +
+      geom_point(aes(x = FATALITIES, y = INJURIES, color = EVTYPE2, 
+                fill = EVTYPE2), alpha = 0.8,size = 3) +
+      facet_grid(injur_intervals ~ fatal_intervals, scales = "free") +
+      scale_y_continuous(breaks = health_cut_breaks[-1],
+                         labels = c("1","3","10","30","100","300","1K","3k",
+                                    "10K", "30K","100K","300K")) +
+      scale_x_continuous(breaks = health_cut_breaks[-1], 
+                         labels = c("1","3","10","30","100","300","1K","3k",
+                                    "10K", "30K","100K","300K")) +
+      labs(x= "Number of fatalities (log10 scale)",
+           y= "Number o injuries (log10 scale)",
+           title = "Extremelly harmfull Climate Events",
+           subtitle = "Dispersion Fatalities vs Infuries (more than 30 fatal or 300 injuries", 
+           caption = "Source: NOAA Storm Database") +
+      theme(title = element_text(size = 12),
+            axis.text.x = element_text(angle = 90,vjust = .5,size = 7),
+            axis.text.y = element_text(size = 7),
+            legend.title = element_blank(),
+            legend.text = element_text(size = 6),
+            legend.position = "bottom")
+
+```
+
+Next, we define the layout for the multiple plotting. You'll find the figure with 2 plots:
+
+
+```{r RESULTS_HEALTH_1_6, fig.height= 10}
+
+# Prepare Layout for the multiple plot
+layout <- "
+A
+A
+B
+B
+"
+
+plot_xtreme + plot_fatal_vs_injur + plot_layout(design = layout)
+
+```
+
+Our conclusion looking at the previous grahp is:
+
+1. Tornados and Extreme Heat are the most harmfull events in terms of fatalities.
+2. `r data$EVTYPE2[which.max(data$FATALITIES)]` is the TOP fatal impact event with `r data$FATALITIES[which.max(data$FATALITIES)]` fatalities in `r month(data$BGN_DATE[which.max(data$FATALITIES)], label = T)`, `r year(data$BGN_DATE[which.max(data$FATALITIES)])`
+3. `r data$EVTYPE2[which.max(data$INJURIES)]` is the TOP fatal impact event with `r data$INJURIES[which.max(data$INJURIES)]` injuries in `r month(data$BGN_DATE[which.max(data$INJURIES)], label = T)`, `r year(data$BGN_DATE[which.max(data$INJURIES)])`
+4. You can see that there are only Tornados in most harmfull events before `r min(data$BGN_YEAR[data$EVTYPE2!="TORNADO" & data$fatal_intervals >= "[30,100)"])`.
+5. After `r min(data$BGN_YEAR[data$EVTYPE2!="TORNADO" & data$fatal_intervals >= "[30,100)"])`, you can see that the most harmfull events are more concentrated in heat (heat, extreme heat, and excessive heat)
+
+Looking for the scatterplot between fatalities and injuries, we can conclude:
+
+1. Events with very high impact in injuries but low in fatalities: FLOOD, ICE STORM, HURRICANE
+2. Events with very high impact in fatalities but low in injuries: HEAT
+3. Events with both very hihg impact in fatalities and injuries: TORNADO
+
+So, in my opinnion, TORNADOs and HEAT (including some heat variants) are, by far, the most harmfull events for population health.
+
+
+### Events with greatest economic consequences
+
+The conclusions for the economic impacts will be presented in a similar way than health impacts.
+
+First, I prepares a plot with the total economical impact per Event Type allover the period. We selected the TOP 10 Events by total amount of propoerty damage, and also the TOP 10 Events by total amount of crop damage.
+
+```{r RESULTS_DAMAGE_1_1}
+# TOP 10 event types with Property damage
+top_sum_event_prop <- data %>% group_by(EVTYPE2) %>% 
+      summarise(sum = sum(property_damage, na.rm = T)) %>% 
+      arrange(desc(sum)) %>% slice_head(n=10)
+
+# TOP 10 event types with crop damage
+top_sum_event_crop <- data %>% group_by(EVTYPE2) %>% 
+      summarise(sum = sum(crop_damage, na.rm = T)) %>% arrange(desc(sum)) %>% 
+      slice_head(n=10)
+
+# Make de union of TOP fatalities and TOP injuries
+top_sum_event_damage <- unique(c(top_sum_event_prop$EVTYPE2, 
+                                 top_sum_event_crop$EVTYPE2))
+
+# Summary of property and crop damages (in USD)
+top_damage <- data %>% ungroup() %>% 
+      select(EVTYPE2, property_damage, crop_damage) %>%
+      filter(EVTYPE2 %in% top_sum_event_health) %>% 
+      group_by(EVTYPE2) %>% 
+      summarise("PROPERTY" = sum(property_damage, na.rm = T),
+                "CROP" = sum(crop_damage, na.rm = T)) %>%
+      ungroup() %>% 
+      pivot_longer(
+             cols = c("PROPERTY", "CROP"),
+             names_to = "damage_type",
+             values_to = "amount") %>%
+      arrange(damage_type,amount) %>% 
+      mutate(order = row_number()) %>% 
+      filter(amount>0)
+      
+
+# Plot Total Impact (Fatalities and Injuries)
+plot_top_damage <- top_damage %>% ggplot() +
+      geom_col(aes(x = order, y = amount, color = damage_type, 
+                   fill = damage_type), alpha = 0.5, width = 0.7) +
+      geom_label(data= top_damage, 
+                aes(order, y= amount, 
+                    label = paste("USD",round(amount/1e+9,2),"B")), 
+                nudge_y = 0.1, size = 2, label.size = 0.1, alpha = 0.5) +
+      facet_grid(damage_type ~., scales = "free", space = "free") +
+      # Titles for plot, axiss and caption
+      labs( x = "Event Type",
+            y = "Damage - USD - (log10 scale)",
+            title = "Economical Impact due to Climate Events in USA (1950-2011)",
+            subtitle = "Top impact Event Types",
+            caption = "Source: NOAA Storm Database"
+            ) +
+      # Some customization for scales and theme
+      scale_x_continuous(
+            breaks = top_damage$order,
+            labels = top_damage$EVTYPE2) +
+      scale_y_log10(breaks = c(0, 1, 1e+3, 30e+3, 1e+6, 30e+6, 1e+9, 30e+9, 1e+12),
+                    labels = c("1","3","1K","30K","1M","30M","1B","30B","1000B")) +
+      coord_flip() +
+      theme(title = element_text(size = 11),
+            legend.title = element_blank(),
+            axis.text.x = element_text(angle = 0,vjust = .5,size = 8),
+            axis.text.y = element_text(size = 8),
+            legend.position = "none")
+
+```
+
+Second, que prepare a scatter plot with the TOP 50 Events by economical impact.
+
+
+
+```{r RESULTS_DAMAGE_1_2}
+
+# remind defined above:
+# damage_cut_breaks <- c(0, 1, 1e+3, 30e+3, 1e+6, 30e+6, 1e+9, 30e+9, 1e+12)
+# damage_cut_labels <- c("[0,1)", "[1,1K)","[1K,30K)", "[30K,1M)", "[1M,30M)",
+#                        "[30M,1B)","[1B,30B)", "[30B,1000B)")
+
+# table(data$fatal_intervals>="[1B,30B)")
+xtreme_damage <- data %>%
+      filter(prop_dmg_intervals >= "[30M,1B)" |
+                   crop_dmg_intervals >= "[30M,1B)") %>%
+      select(BGN_DATE, EVTYPE2, property_damage,crop_damage) %>%
+      pivot_longer(cols = c("property_damage", "crop_damage"),
+             names_to = "damage_type", values_to = "amount") %>% 
+      arrange(desc(amount)) %>% slice_head(n=50) %>% 
+      filter(amount > 0)      # delete registers with 0 value, due to log-scale
+
+# Scatter plot of date vs eonomical impact, faceted by type of impact
+plot_xtreme_damage <- xtreme_damage %>% ggplot() +
+      geom_point(
+            aes(x = as.Date(BGN_DATE), y = amount, 
+                color = EVTYPE2, fill = EVTYPE2), alpha = 0.8,size = 3) +
+      geom_text_repel(data = xtreme_damage %>% arrange(desc(amount)) %>%
+                            slice_head(n=20), 
+                aes(as.Date(BGN_DATE), amount, label = EVTYPE2), 
+                size=2, max.overlaps = 15)+
+      facet_wrap(. ~ damage_type, 
+                 labeller = labeller(damage_type = c(property_damage =
+                                     "PROPERTY",crop_damage = "CROP"))) +
+      # Tittle for graph, axis and caption
+      labs(x= "Date",
+           y= "Damage - USD (log10 scale)",
+           title = "Extremelly economical damage climate events per year",
+           subtitle = "Top 50 economical damage",
+            caption = "Source: NOAA Storm Database") +
+      # Some customization for axiss an themes
+      scale_y_log10(breaks = damage_cut_breaks) +
+      scale_x_date(date_breaks = "2 years") +
+            theme(title = element_text(size = 12),
+            axis.text.x = element_text(angle = 90,vjust = .5,size = 8, 
+                                       face = "bold"),
+            axis.text.y = element_text(face = "bold"),
+            legend.title = element_blank(),
+            legend.text = element_text(size = 6),
+            legend.position = "bottom")
+```
+
+Finally here is the results for the analysis. Please note that I'm using logaritmic scale for best detail in low figures and high figures.
+
+```{r RESULTS_DAMAGE_1_4, fig.height= 11, fig.cap= "Ranking of Top Economical Damage Events  and Scatter plot of TOP Extreme Damage Events"}
+
+plot_top_damage / plot_xtreme_damage
+
+```
+
+In the upper side of the plot, you can see:
+
+1. Flood and Ice Storm are, by far, the most several impact events in terms of crop damage.
+2. Flood and Tornados are, by far, the most several impact events in terms of property damage
+3. Rank #1 in property damage (Flood) is 15 times bigger the amount of the Rank #1 in crop damage (also Flood)
+
+
+In the lower part of the figure you can see the scatter plot of top 50 most extremely economical impact event. You can see:
+
++ Crop damage: `r length(xtreme_damage$EVTYPE2[xtreme_damage$damage_type == "crop_damage"])` events in the TOP 50
++ Property damage: : `r length(xtreme_damage$EVTYPE2[xtreme_damage$damage_type == "property_damage"])` events in the TOP 50
+
+You can conclude clearly in the plot that the TOP destructive events have much relevance in property damage vs crop damages.
+
+
+Finally, I consider remarkable than the period for this TOP 50 goes from `r year(min(xtreme_damage$BGN_DATE))` to `r year(max(xtreme_damage$BGN_DATE))`. I really don't have and answer to the reason of why there are not any of this TOP events between 1950 and `r year(min(xtreme_damage$BGN_DATE))`. 
+I suppose this is very much complex analysis to understand climate trends related to Climate Change and Global Warming. 
+
+
